@@ -67,6 +67,8 @@
       ((zerop pid) ; in the child
        ;; don't receive the parent's SIGINTs
        (posix-setpgrp)
+       #+clasp
+       (core:set-interactive-lisp nil)
        #+sbcl
        (progn
          (sb-ext:disable-debugger)

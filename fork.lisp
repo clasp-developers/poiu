@@ -13,7 +13,7 @@
 (in-package :poiu/fork)
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  #-(and os-unix (or allegro clisp clozure sbcl))
+  #-(and os-unix (or allegro clasp clisp clozure sbcl))
   (warn "POIU doesn't support forking on your Lisp implementation (yet). Help port POIU!")
   #+(and clisp os-unix) (ignore-errors (funcall 'require "linux")))
 
@@ -26,7 +26,7 @@
         (warn
          #.(progn
              "Your implementation cannot fork. Running your build serially."
-             #+(or allegro clisp clozure sbcl)
+             #+(or allegro clasp clisp clozure sbcl)
              "You are running threads, so it is not safe to fork. Running your build serially.")))))
 
 (defun disable-other-waiters ()
@@ -73,24 +73,28 @@
   "Is it possible to fork the current process?"
   #+(and allegro os-unix)
   (null (cdr mp:*all-processes*))
+  #+clasp
+  (null (cdr (mp:all-processes)))
   #+(and clisp os-unix)
   (and (find-symbol* 'wait "POSIX" nil) (find-symbol* 'fork "LINUX" nil) t nil)
   #+(and clozure os-unix)
   (null (cdr (ccl::all-processes)))
   #+(and sbcl os-unix)
   (null (cdr (sb-thread:list-all-threads)))
-  #-(and os-unix (or allegro clisp clozure sbcl))
+  #-(and os-unix (or allegro clasp clisp clozure sbcl))
   nil)
 
 (defun posix-fork ()
   "Assuming the current process can fork, do it, and
 return the child PID in the parent, -1 in the child"
-  #+(and os-unix (or allegro clisp clozure sbcl))
+  #+(and os-unix (or allegro clasp clisp clozure sbcl))
   (unless (can-fork-p)
     (error #.(strcat "Cannot fork: more than one active thread."
                      #+clozure " Are you using single-threaded-ccl?")))
   #+(and allegro os-unix)
   (excl.osi:fork)
+  #+clasp
+  (core:fork nil)
   #+(and clisp os-unix)
   (funcall (find-symbol* 'fork "LINUX"))
   #+(and clozure os-unix)
@@ -100,13 +104,15 @@ return the child PID in the parent, -1 in the child"
     (when (should-i-gc-p)
       (sb-ext:gc))
     (sb-posix:fork))
-  #-(and os-unix (or allegro clisp clozure sbcl))
+  #-(and os-unix (or allegro clasp clisp clozure sbcl))
   (not-implemented-error 'posix-fork))
 
 (defun posix-setpgrp ()
   "POSIX System V style setpgrp(), makes the current process its own process group."
   #+(and allegro os-unix)
   (excl.osi:setpgrp)
+  #+clasp
+  (core:setpgrp)
   #+(and clisp os-unix)
   (if-let (it (find-symbol* 'setprg 'posix nil))
     (funcall it)
@@ -120,10 +126,11 @@ return the child PID in the parent, -1 in the child"
 
 (defconstant +echild+
   #+(and allegro os-unix) excl::*echild*
+  #+clasp :echild
   #+(and clisp os-unix) :echild
   #+(and clozure os-unix) #.(read-from-string "#$ECHILD")
   #+(and sbcl os-unix) sb-posix:echild
-  #-(and os-unix (or allegro clisp clozure sbcl)) nil
+  #-(and os-unix (or allegro clasp clisp clozure sbcl)) nil
   "Second value returned by WAITPID if there is no child to wait for")
 
 (defun posix-waitpid (pid &key nohang untraced continued)
@@ -142,6 +149,16 @@ and the status of said process, to pass to posix-wexitstatus."
       (etypecase exit-status
         (null (if nohang (values 0 ()) (values -1 +echild+)))
         (integer (values pid (list exit-status signal))))))
+  #+clasp
+  (handler-case
+      (multiple-value-bind (pid status code)
+          (core:waitpid :pid pid :nohang nohang :untraced untraced :continued continued)
+        (case pid
+          (0 (values 0 ()))
+          (-1 (values -1 :error))
+          (t (values pid (list pid status code)))))
+    ((and ext::os-error (satisfies no-child-process-condition-p)) ()
+      (values -1 +echild+)))
   #+(and clisp os-unix)
   (handler-case
       (multiple-value-bind (pid status code)
@@ -177,7 +194,7 @@ and the status of said process, to pass to posix-wexitstatus."
                  (if untraced sb-posix:wuntraced 0)))
       (sb-posix:syscall-error (c)
         (values -1 (sb-posix:syscall-errno c)))))
-  #-(and os-unix (or allegro clisp clozure sbcl))
+  #-(and os-unix (or allegro clasp clisp clozure sbcl))
   (progn pid nohang untraced continued
          (not-implemented-error 'posix-setpgrp)))
 
@@ -185,6 +202,8 @@ and the status of said process, to pass to posix-wexitstatus."
   "Convert the status return by POSIX-WAITPID to an exit code between 0 and 255"
   #+(and allegro os-unix)
   (first x)
+  #+clasp
+  (core:wexitstatus x)
   #+(and clisp os-unix)
   (if (eq :exited (second x))
     (third x)
@@ -193,13 +212,17 @@ and the status of said process, to pass to posix-wexitstatus."
   (ccl::wexitstatus x)
   #+(and sbcl os-unix)
   (sb-posix:wexitstatus x)
-  #-(and os-unix (or allegro clisp clozure sbcl))
+  #-(and os-unix (or allegro clasp clisp clozure sbcl))
   (not-implemented-error 'posix-wexitstatus))
 
 (defun posix-pipe ()
   "Create a POSIX pipe and return as two values the corresponding input and output streams"
   #+(and allegro os-unix)
   (excl:make-pipe-stream)
+  #+clasp
+  (multiple-value-bind (read-fd write-fd) (core:pipe)
+    (values (core:make-fd-stream read-fd :direction :input)
+            (core:make-fd-stream write-fd :direction :output)))
   #+(and clisp os-unix)
   (multiple-value-bind (code p) (LINUX:pipe)
     (unless (zerop code)
@@ -214,6 +237,6 @@ and the status of said process, to pass to posix-wexitstatus."
   (multiple-value-bind (read-fd write-fd) (sb-posix:pipe)
     (values (sb-sys:make-fd-stream read-fd :input t)
             (sb-sys:make-fd-stream write-fd :output t)))
-  #-(and os-unix (or allegro clisp clozure sbcl))
+  #-(and os-unix (or allegro clasp clisp clozure sbcl))
   (not-implemented-error 'posix-pipe))
 
