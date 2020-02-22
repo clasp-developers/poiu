@@ -17,7 +17,7 @@
 ;;; First, bootstrap by loading the latest ASDF itself, if not already present.
 (in-package :cl-user)
 
-#+clasp(setq core:*echo-repl-read* t)
+;;;#+clasp(setq core:*echo-repl-read* t)
 
 (setf *load-verbose* nil
       *load-print* nil
@@ -27,15 +27,15 @@
 (ignore-errors (funcall 'require "asdf"))
 #-asdf2 (load "../asdf/build/asdf.lisp")
 
-(asdf:load-system :asdf)
-(push #P"/Users/meister/Development/clasp/src/lisp/modules/asdf/uiop/" asdf:*central-registry*)
+#+(or)(asdf:load-system :asdf)
+;;(push #P"/Users/meister/Development/clasp/src/lisp/modules/asdf/uiop/" asdf:*central-registry*)
 (in-package :asdf)
 
 ;;; Second, some configuration.
 
 ;; OVERRIDE THE VARIABLE BELOW TO REFLECT WHERE YOU PUT THE TEST FILES
 ;; e.g. use a defparameter in cl-user before you load this file, or edit the line below.
-(defvar cl-user::*bastiat* (uiop:subpathname (user-homedir-pathname) "Development/bastiat.org/"))
+#+(or)(defvar cl-user::*bastiat* (uiop:subpathname (user-homedir-pathname) "Development/bastiat.org/"))
 ;; PS: DO NOT forget the ending / for a directory in Lisp namestring syntax,
 ;; or you'll have "interesting" problems.
 
